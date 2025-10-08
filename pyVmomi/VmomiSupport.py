@@ -1379,7 +1379,7 @@ def GetVersionFromVersionUri(version):
 # Get wsdl namespace from version
 def GetWsdlNamespace(version):
     """ Get wsdl namespace from version """
-    return "urn:" + serviceNsMap[version]
+    return f"urn:{serviceNsMap[version]}"
 
 
 def GetInternedWsdlNamespace(version):
