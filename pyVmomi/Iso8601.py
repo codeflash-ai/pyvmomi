@@ -179,9 +179,10 @@ def ParseISO8601(datetimeStr):
 
 def GetUtcOffset():
     try:
-        return time.localtime().tm_gmtoff
+        local_tm = time.localtime()
+        return local_tm.tm_gmtoff
     except AttributeError:
-        useAltZone = time.daylight and time.localtime().tm_isdst
+        useAltZone = time.daylight and local_tm.tm_isdst
         return -(time.altzone if useAltZone else time.timezone)
 
 
