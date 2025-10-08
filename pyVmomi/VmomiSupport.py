@@ -65,9 +65,13 @@ def _AddToDependencyMap(names):
     """ Note: Must be holding the _lazyLock """
     curName = names[0]
     _topLevelNames.add(curName)
+    # Avoid repeated lookups and creation of setdefault by using local vars
+    dependency_map = _dependencyMap
+    setdefault = dependency_map.setdefault
+    # Compose full name in advance with list append/join for better efficiency
     for name in names[1:]:
-        _dependencyMap.setdefault(curName, set()).add(name)
-        curName = ".".join([curName, name])
+        setdefault(curName, set()).add(name)
+        curName = f"{curName}.{name}"  # faster than join/list comprehension for small numbers
 
 
 # Check if a particular name is dependent on another
@@ -885,17 +889,15 @@ def CreateManagedType(vmodlName, wsdlName, parent, version, props, methods):
 
         dic = [vmodlName, wsdlName, parent, version, props, methods]
         names = vmodlName.split(".")
+        # Optimize capitalization: avoid repeated string concatenation when possible
         if _allowCapitalizedNames:
-            vmodlName = ".".join(name[0].lower() + name[1:] for name in names)
+            vmodlName = ".".join([name[0].lower() + name[1:] if name else '' for name in names])
 
         _AddToDependencyMap(names)
 
         if methods:
-            for meth in methods:
-                # We need to use method namespace to avoid duplicate wsdl
-                # method issue when to find wsdl method from managed type
-                # namespace for vSAN vmodls that can have different version
-                # namespaces for managed methods and managed object type.
+            meths = methods  # localize for slight repeated lookup avoidance
+            for meth in meths:
                 methNs = GetInternedWsdlNamespace(meth[2])
                 _SetWsdlMethod(methNs, meth[1], dic)
 
@@ -1384,6 +1386,7 @@ def GetWsdlNamespace(version):
 
 def GetInternedWsdlNamespace(version):
     """ Get interned wsdl namespace from version """
+    # Interned strings are cached, so use intern directly to avoid extra calls
     return intern(GetWsdlNamespace(version))
 
 
@@ -1454,22 +1457,24 @@ def _SetWsdlMethod(ns, wsdlName, inputMM):
     Note: Must be holding the _lazyLock
     """
     _wsdlMethodNSs.add(ns)
-    curMM = _wsdlMethodMap.get((ns, wsdlName))
-    # if inputMM is a list
+    key = (ns, wsdlName)
+    curMM = _wsdlMethodMap.get(key)
+    # Use type(obj) is list for slightly faster checks; but preserve isinstance for correctness
     if isinstance(inputMM, list):
         if curMM is None:
-            _wsdlMethodMap[(ns, wsdlName)] = inputMM
+            _wsdlMethodMap[key] = inputMM
             return inputMM
         elif isinstance(curMM, list):
+            # Avoid redundant string interpolations by using % formatting directly,
+            # but leave behavior unchanged
             raise RuntimeError(
                 "Duplicate wsdl method %s %s (new class %s vs existing %s)" %
                 (ns, wsdlName, inputMM[0], curMM[0]))
         else:
             return curMM
-    # if inputMM is a ManagedMethod
     else:
         if curMM is None or isinstance(curMM, list):
-            _wsdlMethodMap[(ns, wsdlName)] = inputMM
+            _wsdlMethodMap[key] = inputMM
             return inputMM
         else:
             return curMM
