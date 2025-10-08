@@ -20,6 +20,8 @@ from xml.parsers.expat import ExpatError, ParserCreate
 
 from .five import (PY3, binary_type, str_type, text_type,
                    iteritems, HTTPConnection, HTTPSConnection, urlparse)
+from pyVmomi.VmomiSupport import BASE_VERSION, DataObject, Object, XMLNS_XSD, XMLNS_XSI, versionIdMap
+
 if PY3:
     from io import StringIO
     from http.client import HTTPException
@@ -217,25 +219,33 @@ def _SerializeToStr(val,
                     version=None,
                     nsMap=None,
                     hidepasswd=False):
-    if hidepasswd and isinstance(
-            val, DataObject) and val._wsdlName == 'PasswordField':
-        val.value = '(notShown)'
+    # Optimize early return for hidepasswd to reduce attribute lookups if possible
+    if hidepasswd:
+        # Pre-checks before any attribute access to avoid expensive attr/methods unless needed
+        if isinstance(val, DataObject):
+            # Only check _wsdlName if type matches
+            if val._wsdlName == 'PasswordField':
+                val.value = '(notShown)'
+    # Avoid repeated isinstance checks by reordering logic
     if version is None:
-        try:
-            if isinstance(val, list):
-                itemType = val.Item
-                version = itemType._version
+        # Optimize branch: prefer fast exit over try/except
+        if isinstance(val, list):
+            # Using getattr for val.Item and version fallback in one place
+            # Avoid repeated attribute lookups in usual flows
+            itemType = getattr(val, 'Item', None)
+            if itemType is not None:
+                version = getattr(itemType, '_version', BASE_VERSION)
             else:
-                if val is None:
-                    # neither val nor version is given
-                    return ''
-                # Pick up the version from val
-                version = val._version
-        except AttributeError:
-            version = BASE_VERSION
+                version = BASE_VERSION
+        elif val is None:
+            # neither val nor version is given
+            return ''
+        else:
+            version = getattr(val, '_version', BASE_VERSION)
     if info is None:
         info = Object(name="obj", type=object, version=version, flags=0)
 
+    # StringIO initialization: cheapest path
     writer = StringIO()
     SoapSerializer(writer, version, nsMap).Serialize(val, info)
     return writer.getvalue()
@@ -297,28 +307,37 @@ class SoapSerializer:
         """ Constructor """
         self.writer = writer
         self.version = version
-        self.nsMap = nsMap and nsMap or {}
+
+        # Direct assignment and fast path for nsMap
+        if nsMap:
+            self.nsMap = nsMap
+        else:
+            self.nsMap = {}
+
+        # Speed up the defaultNS lookup by avoiding loop once match found
+        self.defaultNS = ''
         for ns, prefix in iteritems(self.nsMap):
             if prefix == '':
                 self.defaultNS = ns
                 break
-        else:
-            self.defaultNS = ''
 
         # Additional attr for outermost tag
         self.outermostAttrs = ''
-
         if version:
             self.outermostAttrs += ' versionId="{0}"'.format(versionIdMap[version])
 
-        # Fill in required xmlns, if not defined
+        # Hold a reference to nsMap only if mutation occurs (avoid .copy if not needed)
+        nsMap_copied = False
+        # Fill in required xmlns, if not defined; compact branch
         for nsPrefix, ns, attrName in [('xsi', XMLNS_XSI, 'xsiPrefix'),
                                        ('xsd', XMLNS_XSD, 'xsdPrefix')]:
             prefix = self.nsMap.get(ns)
             if not prefix:
                 prefix = nsPrefix
                 self.outermostAttrs += ' xmlns:{0}="{1}"'.format(prefix, ns)
-                self.nsMap = self.nsMap.copy()
+                if not nsMap_copied:
+                    self.nsMap = self.nsMap.copy()
+                    nsMap_copied = True
                 self.nsMap[ns] = prefix
             setattr(self, attrName, prefix + ":")
 
@@ -329,6 +348,7 @@ class SoapSerializer:
     # @param info the field
     def Serialize(self, val, info):
         """ Serialize an object """
+        # Direct call, critical path
         self._Serialize(val, info, self.defaultNS)
 
     # Serialize fault detail
