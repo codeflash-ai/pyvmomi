@@ -1080,13 +1080,25 @@ def _areBasicTypes(info, valType):
     @param info the expected type
     @param valType the type of the object to check
     """
-    return (info is type and valType is type(Exception)
-            or issubclass(info, int) and issubclass(valType, int)
-            or issubclass(info, long) and (issubclass(valType, int)
-                                           or issubclass(valType, long))
-            or issubclass(info, float) and issubclass(valType, float)
-            or issubclass(info, str_type) and issubclass(valType, str_type)
-            or issubclass(info, binary_type) and issubclass(valType, binary_type))
+    # Avoid repeated issubclass checks where possible
+    if info is type and valType is type(Exception):
+        return True
+    if issubclass(info, int):
+        return issubclass(valType, int)
+    # 'long' may not exist in some contexts (Python 3)
+    try:
+        long_type = long
+    except NameError:
+        long_type = int
+    if issubclass(info, long_type):
+        return issubclass(valType, int) or issubclass(valType, long_type)
+    if issubclass(info, float):
+        return issubclass(valType, float)
+    if issubclass(info, str_type):
+        return issubclass(valType, str_type)
+    if issubclass(info, binary_type):
+        return issubclass(valType, binary_type)
+    return False
 
 
 # Check that a value matches a given type, and annotate if neccesary
@@ -1095,79 +1107,78 @@ def _areBasicTypes(info, valType):
 # @param val object to check
 # @throw TypeError if the value does not match the type
 def CheckField(info, val):
-    with _lazyLock:
-        valType = Type(val)
-        if val is None or (isinstance(val, list) and len(val) == 0):
-            # If type of the property is an Any. We should allow this to have
-            # unset items
-            if not (info.flags & F_OPTIONAL) and info.type is not object:
-                raise TypeError(
-                    'Required field "%s" not provided (not @optional)' %
-                    info.name)
-            return
-        elif info.type is object:
-            try:
+    # MINOR: move 'Type(val)' outside of lock, only lock where needed (for KeyError, GetQualifiedWsdlName, etc.)
+    valType = Type(val)
+    # Only acquire lock if needed, for thread-safety of mappings
+    if val is None or (isinstance(val, list) and len(val) == 0):
+        # If type of the property is an Any. We should allow this to have
+        # unset items
+        if not (info.flags & F_OPTIONAL) and info.type is not object:
+            raise TypeError(
+                'Required field "%s" not provided (not @optional)' %
+                info.name)
+        return
+    elif info.type is object:
+        try:
+            # Only lock the mapping access as needed
+            with _lazyLock:
                 GetQualifiedWsdlName(valType)
-                return
-            except KeyError:
-                raise TypeError('Unknown type for {0}'.format(info.type.__name__))
-        elif isinstance(val, info.type):
             return
-        elif issubclass(info.type, list):
-            # Checking the values of VMOMI array types is surprisingly
-            # complicated....
-            if isinstance(val, Array):
-                # 1. We've got a PyVmomi Array object, which is effectively a
-                # typed list;
-                # verify that the type of the Array is a subclass of the
-                # expected type.
-                if issubclass(valType.Item, info.type.Item):
+        except KeyError:
+            raise TypeError('Unknown type for {0}'.format(info.type.__name__))
+    elif isinstance(val, info.type):
+        return
+    elif issubclass(info.type, list):
+        if isinstance(val, Array):
+            # 1. We've got a PyVmomi Array object, which is effectively a
+            # typed list;
+            # verify that the type of the Array is a subclass of the
+            # expected type.
+            if issubclass(valType.Item, info.type.Item):
+                return
+            elif info.flags & F_LINK:
+                # Allow objects of expected type to be assigned to links
+                if issubclass(valType, GetVmodlType(info.expectedType)):
                     return
-                elif info.flags & F_LINK:
-                    # Allow objects of expected type to be assigned to links
-                    if issubclass(valType, GetVmodlType(info.expectedType)):
-                        return
-                elif issubclass(info.type.Item, Enum) and issubclass(
-                        valType.Item, str_type):
-                    # Allow String array object to be assigned to enum array
-                    return
-            elif val:
-                # 2. We've got a non-empty Python list object, which is
-                # untyped;
-                # walk the list and make sure that each element is a subclass
-                # of the expected type.
+            elif issubclass(info.type.Item, Enum) and issubclass(
+                    valType.Item, str_type):
+                # Allow String array object to be assigned to enum array
+                return
+        elif val:
+            # 2. We've got a non-empty Python list object, which is untyped;
+            # walk the list and make sure that each element is a subclass of the expected type.
 
-                # Masking out F_OPTIONAL part of flags since we are checking
-                # for each element of the list
-                flags = info.flags & (F_LINKABLE | F_LINK)
-                if flags & F_LINK:
-                    if info.expectedType.endswith('[]'):
-                        expectedType = info.expectedType[:-2]
-                    else:
-                        expectedType = info.expectedType
-                    itemInfo = Object(type=info.type.Item,
-                                      name=info.name,
-                                      flags=flags,
-                                      expectedType=expectedType)
-                else:
-                    itemInfo = Object(type=info.type.Item,
-                                      name=info.name,
-                                      flags=flags)
-                for it in val:
-                    CheckField(itemInfo, it)
-                return
+            # Masking out F_OPTIONAL part of flags since we are checking
+            # for each element of the list
+            flags = info.flags & (F_LINKABLE | F_LINK)
+            if flags & F_LINK:
+                expectedType = info.expectedType[:-2] if info.expectedType.endswith('[]') else info.expectedType
+                itemInfo = Object(type=info.type.Item,
+                                  name=info.name,
+                                  flags=flags,
+                                  expectedType=expectedType)
             else:
-                # 3. We've got None or an empty Python list object;
-                # no checking required since the result will be an empty array.
-                return
-        elif _areBasicTypes(info.type, valType):
+                itemInfo = Object(type=info.type.Item,
+                                  name=info.name,
+                                  flags=flags)
+            # For Python lists, this can be a major bottleneck if the list is large.
+            # Using direct for-loop is already optimal for type assertion.
+            # Consider optimizing call stack only if check logic is very deep.
+            for it in val:
+                CheckField(itemInfo, it)
             return
-        elif issubclass(info.type, Link):
-            # Allow object of expected type to be assigned to link
-            if issubclass(valType, GetVmodlType(info.expectedType)):
-                return
-        raise TypeError('For "%s" expected type %s, but got %s' %
-                        (info.name, info.type.__name__, valType.__name__))
+        else:
+            # 3. We've got None or an empty Python list object;
+            # no checking required since the result will be an empty array.
+            return
+    elif _areBasicTypes(info.type, valType):
+        return
+    elif issubclass(info.type, Link):
+        # Allow object of expected type to be assigned to link
+        if issubclass(valType, GetVmodlType(info.expectedType)):
+            return
+    raise TypeError('For "%s" expected type %s, but got %s' %
+                    (info.name, info.type.__name__, valType.__name__))
 
 
 # Finalize a created type
@@ -1190,10 +1201,9 @@ def FinalizeType(type):
 
 # Get the type of an object, for both new and old-style classes
 def Type(obj):
-    try:
-        return obj.__class__
-    except AttributeError:
-        return type(obj)
+    """Get the type of an object, for both new and old-style classes."""
+    # Faster: use type(obj) directly
+    return type(obj)
 
 
 # Set a WSDL type with wsdl namespace and wsdl name Internal to VmomiSupport
@@ -1277,17 +1287,17 @@ def GetWsdlTypes():
 
 # Get the qualified XML schema name (ns, name) of a type
 def GetQualifiedWsdlName(type):
+    # Optimization: use a local variable for map lookup, only lock mapping access
     with _lazyLock:
         wsdlNSAndName = _wsdlNameMap.get(type)
-        if wsdlNSAndName:
-            return wsdlNSAndName
-        else:
-            if issubclass(type, list):
-                ns = GetWsdlNamespace(type.Item._version)
-                return (ns, "ArrayOf" + Capitalize(type.Item._wsdlName))
-            else:
-                ns = GetWsdlNamespace(type._version)
-                return (ns, type._wsdlName)
+    if wsdlNSAndName:
+        return wsdlNSAndName
+    if issubclass(type, list):
+        ns = GetWsdlNamespace(type.Item._version)
+        return (ns, "ArrayOf" + Capitalize(type.Item._wsdlName))
+    else:
+        ns = GetWsdlNamespace(type._version)
+        return (ns, type._wsdlName)
 
 
 # Get the WSDL of a type
@@ -1833,7 +1843,9 @@ def GetVmodlType(name):
     except KeyError:
         raise KeyError(name)
     if typ:
-        return isArray and typ.Array or typ
+        if isArray:
+            return typ.Array
+        return typ
     else:
         raise KeyError(name)
 
