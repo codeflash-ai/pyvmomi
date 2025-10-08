@@ -1304,9 +1304,14 @@ def Capitalize(str):
 
 # Uncapitalize a string
 def Uncapitalize(str):
-    if str:
-        return str[0].lower() + str[1:]
-    return str
+    if not str:
+        return str
+    # Avoid string concatenation if the first character is already lower
+    first = str[0]
+    lower_first = first.lower()
+    if first == lower_first:
+        return str
+    return lower_first + str[1:]
 
 
 # To uncapitalize the entire vmodl name pyVmomi used to map Java package
