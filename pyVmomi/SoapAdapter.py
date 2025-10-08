@@ -619,7 +619,11 @@ class ExpatDeserializerNSHandlers:
 
     # Get current default ns
     def GetCurrDefNS(self):
-        return self._GetNamespaceFromPrefix()
+        namespaces = self.nsMap.get(None)
+        if namespaces:
+            return namespaces[-1]
+        else:
+            return ""
 
     # Get namespace and wsdl name from tag
     def GetNSAndWsdlname(self, tag):
