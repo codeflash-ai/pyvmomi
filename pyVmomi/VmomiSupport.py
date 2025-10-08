@@ -1315,7 +1315,8 @@ def Uncapitalize(str):
 # This function is needed to support the legacy name mapping.
 def UncapitalizeVmodlName(str):
     if str:
-        return ".".join(name[0].lower() + name[1:] for name in str.split("."))
+        names = str.split(".")
+        return ".".join(name[0].lower() + name[1:] for name in names)
     return str
 
 
@@ -1987,10 +1988,15 @@ def _GetActualName(name):
     """ Note: Must be holding the _lazyLock """
     if _allowCapitalizedNames:
         name = UncapitalizeVmodlName(name)
-    for defMap in _dataDefMap, _managedDefMap, _enumDefMap:
-        dic = defMap.get(name)
-        if dic:
-            return dic[0]
+    dic = _dataDefMap.get(name)
+    if dic:
+        return dic[0]
+    dic = _managedDefMap.get(name)
+    if dic:
+        return dic[0]
+    dic = _enumDefMap.get(name)
+    if dic:
+        return dic[0]
     return None
 
 
