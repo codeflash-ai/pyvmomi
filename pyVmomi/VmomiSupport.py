@@ -1367,7 +1367,7 @@ def GetVersionNamespace(version):
     if not versionId:
         namespace = ns
     else:
-        namespace = '{0}/{1}'.format(ns, versionId)
+        namespace = f'{ns}/{versionId}'
     return namespace
 
 

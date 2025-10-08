@@ -20,6 +20,9 @@ from xml.parsers.expat import ExpatError, ParserCreate
 
 from .five import (PY3, binary_type, str_type, text_type,
                    iteritems, HTTPConnection, HTTPSConnection, urlparse)
+from pyVmomi.StubAdapterAccessorImpl import StubAdapterAccessorMixin
+from pyVmomi.VmomiSupport import GetVersionNamespace, IsChildVersion
+
 if PY3:
     from io import StringIO
     from http.client import HTTPException
@@ -973,7 +976,7 @@ class SoapResponseDeserializer(ExpatDeserializerNSHandlers):
 # -- InvokeMethod(ManagedObject mo, Object methodInfo, Object[] args)
 class StubAdapterBase(StubAdapterAccessorMixin):
     def __init__(self, version, sessionId=None):
-        StubAdapterAccessorMixin.__init__(self)
+        super().__init__()
         self.sessionId = None
         self.SetSessionId(sessionId)
         self.ComputeVersionInfo(version)
@@ -983,14 +986,15 @@ class StubAdapterBase(StubAdapterAccessorMixin):
     # @param ns the namespace
     def ComputeVersionInfo(self, version):
         # Make sure we do NOT fall back to an older version
-        if hasattr(self, 'version') and IsChildVersion(self.version, version):
+        current_version = getattr(self, 'version', None)
+        if current_version is not None and IsChildVersion(current_version, version):
             # print("WARNING: stub degrading: " +
             #       self.version + " -> " + version)
             return
 
         versionNS = GetVersionNamespace(version)
-        if versionNS.find("/") >= 0:
-            self.versionId = '"urn:{0}"'.format(versionNS)
+        if '/' in versionNS:
+            self.versionId = f'"urn:{versionNS}"'
         else:
             self.versionId = ''
         self.version = version
