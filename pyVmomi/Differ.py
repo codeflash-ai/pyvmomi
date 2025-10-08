@@ -6,6 +6,8 @@
 import logging
 
 from .five import PY3
+from pyVmomi.VmomiSupport import F_LINK, F_OPTIONAL, GetWsdlName, Type, types
+
 if not PY3:
     from .five import zip
 
@@ -42,14 +44,14 @@ class Differ:
         if not oldObj or not newObj:
             __Log__.debug('DiffAnyObjects: One of the objects is unset.')
             return self._looseMatch
-        oldObjInstance = oldObj
-        newObjInstance = newObj
-        if isinstance(oldObj, list):
-            oldObjInstance = oldObj[0]
-        if isinstance(newObj, list):
-            newObjInstance = newObj[0]
-        # Need to see if it is a primitive type first since type information
-        #   will not be available for them.
+
+        # Avoid repeated isinstance/list checks and rebinding
+        oldObjIsList = isinstance(oldObj, list)
+        newObjIsList = isinstance(newObj, list)
+        oldObjInstance = oldObj[0] if oldObjIsList else oldObj
+        newObjInstance = newObj[0] if newObjIsList else newObj
+
+        # Primitive type check first
         if (IsPrimitiveType(oldObj) and IsPrimitiveType(newObj)
                 and oldObj.__class__.__name__ == newObj.__class__.__name__):
             if oldObj == newObj:
@@ -57,6 +59,8 @@ class Differ:
             elif oldObj is None or newObj is None:
                 __Log__.debug('DiffAnyObjects: One of the objects in None')
             return False
+
+        # Fast local
         oldType = Type(oldObjInstance)
         newType = Type(newObjInstance)
         if oldType != newType:
@@ -64,24 +68,29 @@ class Differ:
                           repr(GetWsdlName(oldObjInstance.__class__)),
                           repr(GetWsdlName(newObjInstance.__class__)))
             return False
-        elif isinstance(oldObj, list):
+
+        if oldObjIsList:
             return self.DiffArrayObjects(oldObj, newObj, isObjLink)
-        elif isinstance(oldObjInstance, types.ManagedObject):
-            return (not oldObj
-                    and not newObj) or (oldObj and newObj
+
+        if isinstance(oldObjInstance, types.ManagedObject):
+            # If both are unset, True; if both set, compare _moId;
+            # no need to check both unset with "not oldObj and not newObj" because
+            # initial check (not oldObj or not newObj) handled above.
+            return (not oldObj and not newObj) or (oldObj and newObj
                                         and oldObj._moId == newObj._moId)
-        elif isinstance(oldObjInstance, types.DataObject):
+
+        if isinstance(oldObjInstance, types.DataObject):
             if isObjLink:
                 bMatch = oldObj.GetKey() == newObj.GetKey()
-                LogIf(
-                    not bMatch, 'DiffAnyObjects: Keys do not match %s != %s' %
-                    (oldObj.GetKey(), newObj.GetKey()))
+                if not bMatch:
+                    __Log__.debug(
+                        'DiffAnyObjects: Keys do not match %s != %s',
+                        oldObj.GetKey(), newObj.GetKey())
                 return bMatch
             return self.DiffDataObjects(oldObj, newObj)
 
-        else:
-            raise TypeError("Unknown type: " +
-                            repr(GetWsdlName(oldObj.__class__)))
+        raise TypeError("Unknown type: " +
+                        repr(GetWsdlName(oldObj.__class__)))
 
     def DiffDoArrays(self, oldObj, newObj, isElementLinks):
         """Diff two DataObject arrays"""
@@ -144,11 +153,13 @@ class Differ:
             return True
         if not oldObj or not newObj:
             return False
-        if len(oldObj) != len(newObj):
+        oldLen = len(oldObj)
+        if oldLen != len(newObj):
             __Log__.debug(
                 'DiffArrayObjects: Array lengths do not match %d != %d',
-                len(oldObj), len(newObj))
+                oldLen, len(newObj))
             return False
+
         firstObj = oldObj[0]
         if IsPrimitiveType(firstObj):
             return self.DiffPrimitiveArrays(oldObj, newObj)
@@ -173,46 +184,50 @@ class Differ:
                 'DiffDataObjects: Types do not match for dataobjects. '
                 '%s != %s', oldObj._wsdlName, newObj._wsdlName)
             return False
-        for prop in oldObj._GetPropertyList():
-            oldProp = getattr(oldObj, prop.name)
-            newProp = getattr(newObj, prop.name)
-            propType = oldObj._GetPropertyInfo(prop.name).type
+
+        get_prop_list = oldObj._GetPropertyList
+        get_prop_info = oldObj._GetPropertyInfo
+
+        for prop in get_prop_list():
+            prop_name = prop.name
+            oldProp = getattr(oldObj, prop_name)
+            newProp = getattr(newObj, prop_name)
+            propType = get_prop_info(prop_name).type
+            propFlags = prop.flags
+
             if not oldProp and not newProp:
                 continue
-            elif ((prop.flags & F_OPTIONAL) and self._looseMatch
+            elif ((propFlags & F_OPTIONAL) and self._looseMatch
                   and (not newProp or not oldProp)):
                 continue
             elif not oldProp or not newProp:
                 __Log__.debug(
                     'DiffDataObjects: One of the objects has '
-                    'the property %s unset', prop.name)
+                    'the property %s unset', prop_name)
                 return False
 
-            bMatch = True
             if IsPrimitiveType(oldProp):
                 bMatch = oldProp == newProp
             elif isinstance(oldProp, types.ManagedObject):
-                bMatch = self.DiffAnyObjects(oldProp, newProp, prop.flags
-                                             & F_LINK)
+                bMatch = self.DiffAnyObjects(oldProp, newProp, propFlags & F_LINK)
             elif isinstance(oldProp, types.DataObject):
-                if prop.flags & F_LINK:
+                if propFlags & F_LINK:
                     bMatch = oldObj.GetKey() == newObj.GetKey()
-                    LogIf(
-                        not bMatch,
-                        'DiffDataObjects: Key match failed %s != %s' %
-                        (oldObj.GetKey(), newObj.GetKey()))
+                    if not bMatch:
+                        __Log__.debug(
+                            'DiffDataObjects: Key match failed %s != %s',
+                            oldObj.GetKey(), newObj.GetKey())
                 else:
-                    bMatch = self.DiffAnyObjects(oldProp, newProp, prop.flags
-                                                 & F_LINK)
+                    bMatch = self.DiffAnyObjects(oldProp, newProp, propFlags & F_LINK)
             elif isinstance(oldProp, list):
                 bMatch = self.DiffArrayObjects(oldProp, newProp,
-                                               prop.flags & F_LINK)
+                                               propFlags & F_LINK)
             else:
                 raise TypeError("Unknown type: " + repr(propType))
 
             if not bMatch:
                 __Log__.debug('DiffDataObjects: Objects differ in property %s',
-                              prop.name)
+                              prop_name)
                 return False
         return True
 

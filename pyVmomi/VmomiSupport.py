@@ -1190,9 +1190,10 @@ def FinalizeType(type):
 
 # Get the type of an object, for both new and old-style classes
 def Type(obj):
-    try:
+    # Fast-path hasattr check avoids exception overhead for normal objects
+    if hasattr(obj, "__class__"):
         return obj.__class__
-    except AttributeError:
+    else:
         return type(obj)
 
 
