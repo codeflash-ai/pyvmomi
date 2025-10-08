@@ -2050,8 +2050,17 @@ def GetRequestContext():
 # Get the Http context for the current thread
 def GetHttpContext():
     """ Get the Http context for the current thread """
-    global _threadLocalContext
-    return _threadLocalContext.__dict__.setdefault('httpCtx', dict())
+    # Direct attribute access is slightly faster than going through __dict__,
+    # and Python's threading.local allows direct dotted-attribute storage.
+    # The behavioral preservation requirement means we must return a dict,
+    # and set it exactly as previously, but we can avoid the __dict__
+    # lookup for a small performance gain.
+    try:
+        return _threadLocalContext.httpCtx
+    except AttributeError:
+        ctx = dict()
+        _threadLocalContext.httpCtx = ctx
+        return ctx
 
 
 # Class that resolves links
