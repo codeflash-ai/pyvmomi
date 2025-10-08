@@ -2043,8 +2043,11 @@ HOSTAPI_INVOKE_TIMEOUT_KEY = 'timeout'
 # Get the RequestContext for the current thread
 def GetRequestContext():
     """ Get the RequestContext for the current thread """
-    global _threadLocalContext
-    return _threadLocalContext.__dict__.setdefault('reqCtx', StringDict())
+    try:
+        return _threadLocalContext.reqCtx
+    except AttributeError:
+        _threadLocalContext.reqCtx = StringDict()
+        return _threadLocalContext.reqCtx
 
 
 # Get the Http context for the current thread
