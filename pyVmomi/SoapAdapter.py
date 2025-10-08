@@ -20,6 +20,8 @@ from xml.parsers.expat import ExpatError, ParserCreate
 
 from .five import (PY3, binary_type, str_type, text_type,
                    iteritems, HTTPConnection, HTTPSConnection, urlparse)
+from pyVmomi.VmomiSupport import BASE_VERSION, DataObject, Object
+
 if PY3:
     from io import StringIO
     from http.client import HTTPException
@@ -217,25 +219,31 @@ def _SerializeToStr(val,
                     version=None,
                     nsMap=None,
                     hidepasswd=False):
-    if hidepasswd and isinstance(
-            val, DataObject) and val._wsdlName == 'PasswordField':
-        val.value = '(notShown)'
+    # Fast path for empty value and version is None
+    if val is None and version is None:
+        return ''
+    # Optimized hide password logic (avoid unnecessary isinstance)
+    if hidepasswd:
+        # DataObject and _wsdlName comparison is very fast and only run if hidepasswd
+        if isinstance(val, DataObject) and getattr(val, '_wsdlName', None) == 'PasswordField':
+            val.value = '(notShown)'
+    # Set version efficiently
     if version is None:
-        try:
-            if isinstance(val, list):
+        # Fast path for list type
+        if isinstance(val, list):
+            try:
                 itemType = val.Item
                 version = itemType._version
-            else:
-                if val is None:
-                    # neither val nor version is given
-                    return ''
-                # Pick up the version from val
-                version = val._version
-        except AttributeError:
-            version = BASE_VERSION
+            except AttributeError:
+                version = BASE_VERSION
+        elif val is not None:
+            version = getattr(val, '_version', BASE_VERSION)
+        else:
+            # val is None and version is None already handled above
+            return ''
+    # Set info efficiently
     if info is None:
         info = Object(name="obj", type=object, version=version, flags=0)
-
     writer = StringIO()
     SoapSerializer(writer, version, nsMap).Serialize(val, info)
     return writer.getvalue()
