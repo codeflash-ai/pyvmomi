@@ -634,12 +634,10 @@ class ExpatDeserializerNSHandlers:
         return ns, name
 
     def _GetNamespaceFromPrefix(self, prefix=None):
-        namespaces = self.nsMap.get(prefix)
-        if namespaces:
-            ns = namespaces[-1]
-        else:
-            ns = ""
-        return ns
+        try:
+            return self.nsMap[prefix][-1]
+        except (KeyError, IndexError):
+            return ""
 
     # Handle namespace begin
     def StartNamespaceDeclHandler(self, prefix, uri):
