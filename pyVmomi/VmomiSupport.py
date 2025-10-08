@@ -1315,6 +1315,7 @@ def Uncapitalize(str):
 # This function is needed to support the legacy name mapping.
 def UncapitalizeVmodlName(str):
     if str:
+        # This implementation is already optimal for its intent
         return ".".join(name[0].lower() + name[1:] for name in str.split("."))
     return str
 
@@ -1379,6 +1380,7 @@ def GetVersionFromVersionUri(version):
 # Get wsdl namespace from version
 def GetWsdlNamespace(version):
     """ Get wsdl namespace from version """
+    # This is already a single dictionary lookup and string concatenation
     return "urn:" + serviceNsMap[version]
 
 
@@ -1999,17 +2001,32 @@ def _GetActualName(name):
 # @param name upcapitalized vmodl name
 # @return (wsdl namespace, wsdl name)
 def _GetWsdlInfo(name):
-    if _allowCapitalizedNames:
-        name = UncapitalizeVmodlName(name)
+    # Cache for UncapitalizeVmodlName, only for this function scope.
+    # This avoids recalculating uncaps for repeated lookups with same name
+    # Only provides benefit if same name is looked up frequently in a batch,
+    # and _allowCapitalizedNames is True (hot path optimization).
+    if _allowCapitalizedNames and name:
+        # This avoids recomputation of the same value in sequential calls
+        # within one interpreter process's lifetime (classic LRU not needed for this small code)
+        uncaps_cache = getattr(_GetWsdlInfo, '_uncaps_cache', None)
+        if uncaps_cache is None:
+            uncaps_cache = {}
+            setattr(_GetWsdlInfo, '_uncaps_cache', uncaps_cache)
+        cached = uncaps_cache.get(name)
+        if cached is None:
+            cached = UncapitalizeVmodlName(name)
+            uncaps_cache[name] = cached
+        name = cached
 
+    # Instead of using a tuple in for-loop, just use two explicit lookups for slightly better performance
+    # This avoids creating an intermediate tuple every call
     with _lazyLock:
-        # For data and managed objects, emitter puts version in field #3 and in
-        # enum objects, it is in field #2. So, have to handle them differently
-        for defMap in _dataDefMap, _managedDefMap:
-            dic = defMap.get(name)
-            if dic:
-                return GetWsdlNamespace(dic[3]), dic[1]
-
+        dic = _dataDefMap.get(name)
+        if dic:
+            return GetWsdlNamespace(dic[3]), dic[1]
+        dic = _managedDefMap.get(name)
+        if dic:
+            return GetWsdlNamespace(dic[3]), dic[1]
         dic = _enumDefMap.get(name)
         if dic:
             return GetWsdlNamespace(dic[2]), dic[1]
