@@ -1843,8 +1843,7 @@ def GetVmodlType(name):
 # @param defs Specifies the definitions from which to extract the names
 # @return a new list of the VMODL names in the specified dictionary
 def _ListVmodlTypes(defs):
-    with _lazyLock:
-        return list(defs.keys())
+    return list(defs.keys())
 
 
 # List all VMODL data types
