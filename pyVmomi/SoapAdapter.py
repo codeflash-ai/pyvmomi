@@ -708,9 +708,9 @@ class SoapDeserializer(ExpatDeserializerNSHandlers):
 
     def SplitTag(self, tag):
         """ Split tag into ns, name """
-        idx = tag.find(NS_SEP)
-        if idx >= 0:
-            return tag[:idx], tag[idx + 1:]
+        ns, sep, name = tag.partition(NS_SEP)
+        if sep:
+            return ns, name
         else:
             return "", tag
 
