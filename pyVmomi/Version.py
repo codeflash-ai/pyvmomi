@@ -22,4 +22,6 @@ def AddVersion(version,
 
 # Check if a version is a child of another
 def IsChildVersion(child, parent):
-    return child == parent or parent in parentMap[child]
+    # Assumes parentMap[child] is a set, so 'in' is O(1);
+    # micro-optimization for direct __contains__ call
+    return child == parent or parentMap[child].__contains__(parent)
