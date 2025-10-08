@@ -624,13 +624,17 @@ class ExpatDeserializerNSHandlers:
     # Get namespace and wsdl name from tag
     def GetNSAndWsdlname(self, tag):
         """ Map prefix:name tag into ns, name """
+        # Optimize tag parsing to avoid unnecessary string operations
         idx = tag.find(":")
         if idx >= 0:
-            prefix, name = tag[:idx], tag[idx + 1:]
+            prefix = tag[:idx]
+            name = tag[idx + 1:]
         else:
-            prefix, name = None, tag
-        # Map prefix to ns
-        ns = self._GetNamespaceFromPrefix(prefix)
+            prefix = None
+            name = tag
+        # Inline the _GetNamespaceFromPrefix logic for direct access
+        namespaces = self.nsMap.get(prefix)
+        ns = namespaces[-1] if namespaces else ""
         return ns, name
 
     def _GetNamespaceFromPrefix(self, prefix=None):
