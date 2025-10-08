@@ -1298,7 +1298,10 @@ def GetWsdlName(type):
 # Capitalize a string
 def Capitalize(str):
     if str:
-        return str[0].upper() + str[1:]
+        first_char = str[0]
+        if 'a' <= first_char <= 'z':
+            return chr(ord(first_char) - 32) + str[1:]
+        return str
     return str
 
 
@@ -1933,14 +1936,15 @@ def GetPythonTypeName(wsdlTypeName, ns):
 # @return python method name
 def GetPythonMethodName(wsdlTypeName, ns, wsdlMethodName):
     try:
-        _, _, _, _, _, methods = _wsdlDefMap[(ns, wsdlTypeName)]
+        # Direct mapping lookup, immutable tuple keys: fast
+        methods = _wsdlDefMap[(ns, wsdlTypeName)][5]
     except KeyError:
         raise NameError('No type found with namespace %s and name %s' %
                         (ns, wsdlTypeName))
+    # Use generator expression with next() for fast short-circuit
     for method in methods:
-        mVmodl, mWsdl, _, _, _, _, _ = method
-        if mWsdl == wsdlMethodName:
-            return Capitalize(mVmodl)
+        if method[1] == wsdlMethodName:
+            return Capitalize(method[0])
     raise NameError('No method found with name ' + wsdlMethodName)
 
 
