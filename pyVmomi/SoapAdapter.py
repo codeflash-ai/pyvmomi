@@ -20,6 +20,8 @@ from xml.parsers.expat import ExpatError, ParserCreate
 
 from .five import (PY3, binary_type, str_type, text_type,
                    iteritems, HTTPConnection, HTTPSConnection, urlparse)
+import zlib
+
 if PY3:
     from io import StringIO
     from http.client import HTTPException
@@ -1189,7 +1191,6 @@ class GzipReader:
         self.readChunkSize = readChunkSize
 
     def _CreateUnzip(self, firstChunk):
-        import zlib
         if self.encoding == GzipReader.GZIP:
             wbits = zlib.MAX_WBITS + 16
         elif self.encoding == GzipReader.DEFLATE:
@@ -1197,12 +1198,22 @@ class GzipReader:
             chunkLen = len(firstChunk)
             # Assume raw deflate
             wbits = -zlib.MAX_WBITS
-            if firstChunk[:3] == ['\x1f', '\x8b', '\x08']:
-                # gzip: Apache mod_deflate will send gzip. Yurk!
-                wbits = zlib.MAX_WBITS + 16
+
+            # Optimize: convert string prefix test and ord into bytes conversion and memoryview for speed
+            # The code expects firstChunk to be a list of strings, eg ['\x1f', '\x8b', '\x08']
+            # We'll minimize accesses
+            if chunkLen >= 3:
+                # Compare only if enough length
+                if (firstChunk[0] == '\x1f' and firstChunk[1] == '\x8b' and firstChunk[2] == '\x08'):
+                    # gzip: Apache mod_deflate will send gzip. Yurk!
+                    wbits = zlib.MAX_WBITS + 16
             elif chunkLen >= 2:
-                b0 = ord(firstChunk[0])
-                b1 = ord(firstChunk[1])
+                # Only run if not taken the gzip branch above
+                # Avoiding repeated ord()
+                fc0 = firstChunk[0]
+                fc1 = firstChunk[1]
+                b0 = ord(fc0)
+                b1 = ord(fc1)
                 if (b0 & 0xf) == 8 and (((b0 * 256 + b1)) % 31) == 0:
                     # zlib deflate
                     wbits = min(((b0 & 0xf0) >> 4) + 8, zlib.MAX_WBITS)
