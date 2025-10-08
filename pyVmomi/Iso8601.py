@@ -92,11 +92,12 @@ class TZManager:
     def GetTZInfo(tzname='UTC', utcOffset=None, dst=None):
         """ Get / Add timezone info """
         key = (tzname, utcOffset, dst)
-        tzInfo = TZManager._tzInfos.get(key)
-        if not tzInfo:
+        try:
+            return TZManager._tzInfos[key]
+        except KeyError:
             tzInfo = TZInfo(tzname, utcOffset, dst)
             TZManager._tzInfos[key] = tzInfo
-        return tzInfo
+            return tzInfo
 
 
 def ParseISO8601(datetimeStr):
