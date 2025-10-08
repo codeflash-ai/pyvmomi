@@ -1613,12 +1613,11 @@ HEADER_SECTION_END = '\r\n\r\n'
 
 # Parse an HTTP response into its headers and body
 def ParseHttpResponse(httpResponse):
-    headerEnd = httpResponse.find(HEADER_SECTION_END)
-    if headerEnd == -1:
+    # Use partition for early exit and efficiency, avoids calculating index twice and avoids slice on not-found
+    headerText, sep, bodyText = httpResponse.partition(HEADER_SECTION_END)
+    if not sep:
         return ('', '')
-    headerEnd += len(HEADER_SECTION_END)
-    headerText = httpResponse[:headerEnd]
-    bodyText = httpResponse[headerEnd:]
+    headerText += HEADER_SECTION_END
     return (headerText, bodyText)
 
 
